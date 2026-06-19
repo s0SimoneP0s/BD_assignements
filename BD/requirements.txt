@@ -1,0 +1,18 @@
+neo4j 
+pandas 
+matplotlib 
+networkx 
+seaborn
+scikit-learn
+jupyterlab
+nbmerge # nbmerge notebook1.ipynb notebook2.ipynb -o merged_notebook.ipynb
+nbmanips # nb split merged_notebook.ipynb 5,9 
+kagglehub   
+geopandas  
+umap-learn 
+statsmodels
+scipy     
+pyspark
+redis
+hiredis    
+pip
