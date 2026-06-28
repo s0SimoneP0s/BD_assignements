@@ -40,8 +40,8 @@
 Questo rapporto descrive una valutazione sperimentale di un sistema distribuito NOSQL basato su Redis. %
 L'obiettivo è quantificare il comportamento del sistema sotto guasti controllati e partizioni di rete, %
 e collegare le osservazioni al teorema CAP. Il codice dei test e gli script di orchestrazione sono %
-disponibili nel repository del progetto (nota a piè di pagina della pagina del titolo) e su %
-\url{https://github.com/pellacaniSimone/BDA_assignements}.
+disponibili nel repository del progetto e su %
+\url{https://github.com/s0SimoneP0s/BD_assignements}.
 
 %%% Crea il sommario
 \tableofcontents
@@ -137,10 +137,12 @@ Gli esperimenti sono eseguiti con orchestration containerizzata (Docker Compose)
 
 
 \section{Modelli di dati in Redis}
-Questa sezione fornisce una panoramica sintetica ma completa dei tipi di dato nativi di Redis e delle loro implicazioni per storage, consistenza e comportamento del sistema. L'obiettivo è spiegare come i diversi modelli di dato influenzino la correttezza dell'applicazione e come i test debbano essere progettati per esercitarli.
+Questa sezione fornisce una panoramica sintetica ma completa dei tipi di dato nativi di Redis e delle loro implicazioni per storage, %
+consistenza e comportamento del sistema. L'obiettivo è spiegare come i diversi modelli di dato influenzino la correttezza dell'applicazione e come i test debbano essere progettati per esercitarli.
 
 \subsection{Panoramica}
-Redis è principalmente uno store key-value che espone diversi tipi di dato nativi \cite{RedisDocs}. Ogni tipo offre garanzie semantiche e pattern d'uso differenti; queste scelte influenzano replicazione, concorrenza e recupero.
+Redis è principalmente uno store key-value che espone diversi tipi di dato nativi \cite{RedisDocs}. %
+Ogni tipo offre garanzie semantiche e pattern d'uso differenti; queste scelte influenzano replicazione, concorrenza e recupero.
 
 \subsection{Tipi principali e proprietà}
 \begin{itemize}
