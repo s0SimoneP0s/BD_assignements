@@ -25,7 +25,7 @@
 \geometry{a4paper, margin=2cm}
 \definecolor{unimorered}{RGB}{209,65,36}
 \definecolor{unimoregrey}{RGB}{99,102,106}
-\allsectionsfont{\color{black}} %imposta il colore per tutti i titoli
+\allsectionsfont{\color{black}}
 \usepackage{helvet}
 \renewcommand{\familydefault}{\sfdefault}
 \sectionfont{\fontfamily{RobotoSlab-TLF}\selectfont}
@@ -34,16 +34,16 @@
 
 \input{titlepage}
 
-% Abstract (posizionato prima del sommario per formato accademico)
+
 \addcontentsline{toc}{section}{Sommario}
 \section*{Sommario}
-Questo rapporto descrive una valutazione sperimentale di un sistema distribuito NOSQL basato su Redis. %
-L'obiettivo è quantificare il comportamento del sistema sotto guasti controllati e partizioni di rete, %
-e collegare le osservazioni al teorema CAP. Il codice dei test e gli script di orchestrazione sono %
+Questo rapporto presenta una valutazione sperimentale di un sistema distribuito NoSQL basato su Redis. %
+L'obiettivo è misurare il comportamento del sistema sotto guasti controllati e partizioni di rete, %
+collegando le osservazioni al teorema CAP. Il codice dei test e gli script di orchestrazione sono %
 disponibili nel repository del progetto e su %
 \url{https://github.com/s0SimoneP0s/BD_assignements}.
 
-%%% Crea il sommario
+
 \tableofcontents
 \pagenumbering{arabic}
 \newpage
@@ -72,22 +72,28 @@ In pratica: \cite{itwiki:149387620}
 
 \begin{itemize}
   \item \textbf{Disponibilità} (availability): ogni richiesta a un nodo non fallito riceve una risposta (senza garantire sia il valore più recente). %
-verrà testato se il sistema continua ad accettare e servire richieste corrette quando alcuni nodi falliscono.
+verificheremo se il sistema continua ad accettare e servire richieste corrette quando alcuni nodi falliscono.
   \item \textbf{Consistenza} (copy-consistency): tutti i nodi vedano gli stessi dati nello stesso momento. %
-verrà testato se le repliche ritornano lo stesso stato dopo divers eventi casuali su nodi di rete.
+verificheremo se le repliche ritornano lo stesso stato dopo eventi casuali sui nodi di rete.
   \item \textbf{Tolleranza alle partizioni} (partitioning): il sistema continua a operare nonostante partizioni di rete arbitrarie. %
-verrà testato se il sistema continua a operare nonostante si forzino partizioni di rete arbitrarie.
+verificheremo se il sistema continua a operare anche quando le partizioni di rete vengono forzate.
 \end{itemize}
 
-Gli esperimenti sono eseguiti in un caso ideale; un piccolo cluster containerizzato, %
-i test sono progettati per misurare disponibilità, diverse nozioni di consistenza e comportamento di recupero.
+Gli esperimenti sono condotti in un contesto ideale: un piccolo cluster containerizzato. %
+I test sono progettati per misurare disponibilità, diverse nozioni di consistenza e comportamento di recupero.
 
 
 \section{Redis data model e implicazioni per i test}
-Redis è un sistema complesso, noi ne useremo una parte molto semplice, il \textbf{String key-value} \cite{RedisDocs}. %
-Di seguito una panoramica dei tipi di dato principali, coerente con la documentazione ufficiale di Redis \cite{RedisDocs}.
+Redis è un sistema ricco di funzionalità, ma nel contesto di questo lavoro si presta a un uso semplice: è facile da deployare, configurare e integrare nel cluster di test. In particolare, %
+useremo solo la parte più essenziale, il \textbf{String key-value}. %
+Di seguito una panoramica dei tipi di dato principali, coerente con la documentazione ufficiale di Redis.
 
-\subsection{Tipi principali e proprietà}
+\subsection{Panoramica}
+Redis è principalmente uno store key-value che espone diversi tipi di dato nativi \cite{RedisDocs}. %
+Ogni tipo offre garanzie semantiche e pattern d'uso differenti; queste scelte influenzano replicazione, concorrenza e recupero.
+
+
+\subsection{Introduzione}
 \begin{itemize}
     \item \textbf{Stringhe}: valori binary-safe per contatori e payload piccoli; comandi atomici `SET`/`GET`.
     \item \textbf{Hash}: mappe campo/valore per record ad oggetto e aggiornamenti parziali.
@@ -100,17 +106,130 @@ Di seguito una panoramica dei tipi di dato principali, coerente con la documenta
 Idealmente il sistema gestisce separatamente le strutture dati dalla logica di partizionamento e replicazione, 
 quindi verrà testato il comportamento di una struttura dati campione.
 
+
+
+\subsection{Modelli di dati in Redis}
+Sintetizziamo i tipi di dato nativi di Redis, evidenziando implicazioni su storage, %
+consistenza e comportamento. L’obiettivo è mostrare come ogni modello influenzi la correttezza %
+dell’applicazione e guidare la progettazione dei test per verificarli adeguatamente. %
+Colleghiamo poi ciascun tipo a casi d’uso concreti, chiarendo il problema applicativo che aiuta a risolvere.
+
+
+\begin{itemize}
+    \item \textbf{Stringhe}: sono la scelta corretta per valori atomici, contatori, cache di piccole dimensioni %
+e flag di stato. Risolvono il problema del salvataggio semplice chiave-valore e supportano operazioni %
+rapide e atomiche come aggiornamenti, letture e incrementi.
+    \begin{lstlisting}[language=Python]
+r.set("user:1:name", "Mario")
+name = r.get("user:1:name")
+r.incr("page:views")
+    \end{lstlisting}
+    \item \textbf{Hash}: sono utili quando un'entità ha molti attributi, ad esempio un profilo utente, un record %
+prodotto o una configurazione. Risolvono il problema di aggiornare solo alcuni campi senza riscrivere %
+tutto l'oggetto.
+    \begin{lstlisting}[language=Python]
+r.hset("user:1", mapping={"name": "Mario", "age": 22})
+user_name = r.hget("user:1", "name")
+r.hincrby("user:1", "age", 1)
+    \end{lstlisting}
+    \item \textbf{Liste}: sono adatte a code di lavoro, feed temporali, log append-only e buffer di messaggi. %
+Risolvono il problema dell'ordinamento degli elementi e dell'elaborazione FIFO/LIFO.
+    \begin{lstlisting}[language=Python]
+r.lpush("jobs", "job-1")
+next_job = r.rpop("jobs")
+size = r.llen("jobs")
+    \end{lstlisting}
+    \item \textbf{Set}: sono indicate per rappresentare collezioni di elementi unici, come tag, utenti online %
+o insiemi di appartenenza. Risolvono il problema dei duplicati e rendono efficienti test di membership %
+e operazioni insiemistiche.
+    \begin{lstlisting}[language=Python]
+r.sadd("online-users", "alice")
+is_member = r.sismember("online-users", "alice")
+members = r.smembers("online-users")
+    \end{lstlisting}
+    \item \textbf{Sorted set (zset)}: sono utili per classifiche, leaderboard, priorità e range di punteggio, %
+ad esempio top utenti o job scheduling. Risolvono il problema dell'ordinamento dinamico con punteggi %
+aggiornabili.
+    \begin{lstlisting}[language=Python]
+r.zadd("leaderboard", {"alice": 120, "bob": 95})
+top = r.zrevrange("leaderboard", 0, 2, withscores=True)
+score = r.zscore("leaderboard", "alice")
+    \end{lstlisting}
+    \item \textbf{Stream}: sono adatti a pipeline di eventi, telemetria e processing distribuito con consumer group. %
+Risolvono il problema dell'ingestione ordinata dei messaggi e della loro elaborazione affidabile.
+    \begin{lstlisting}[language=Python]
+msg_id = r.xadd("events", {"type": "login", "user": "alice"})
+entries = r.xrange("events", count=1)
+r.xgroup_create("events", "workers", id="0", mkstream=True)
+    \end{lstlisting}
+    \item \textbf{Tipi specializzati}: bitmap, HyperLogLog e strutture geospaziali sono utili per casi come %
+conteggi approssimati, tracciamento di flag compatti e query geografiche. Risolvono problemi di spazio, %
+cardinalità approssimata e rappresentazione efficiente di dati derivati.
+    \begin{lstlisting}[language=Python]
+r.setbit("flags", 7, 1)
+count = r.pfcount("unique-visitors")
+r.geoadd("stores", {"store-1": (12.5, 41.9)})
+    \end{lstlisting}
+\end{itemize}
+
+Nel nostro esperimento, però, questi modelli non vengono esercitati tutti: il workload di test usa %
+principalmente la struttura \textbf{String}, tramite operazioni \texttt{SET}/\texttt{GET}, perché l'obiettivo è %
+misurare disponibilità, consistenza e tolleranza ai guasti del cluster nel caso più semplice e controllabile.
+
+
+
+
 \subsection{Replicazione, persistenza e implicazioni di consistenza}
-E' stato scelto Redis per la sua semplicità e per la disponibilità di un cluster containerizzato pronto all'uso \cite{RedisDocs}. %
-Redis supporta replicazione asincrona (primary-replica) \cite{RedisDocs}. \\
-La replicazione asincrona implica che le repliche possano essere in ritardo e restituire dati obsoleti se servite per le letture \cite{RedisDocs}.
-Questa tolleranza implica che le letture dalle repliche possano essere stale %
-e quindi la consistenza non è garantita in un caso ideale?
+Redis è stato scelto perché unisce un insieme molto ricco di funzionalità a un uso pratico semplice, sia a livello implementativo sia nella fase di deploy e configurazione del sistema. %
+La replicazione asincrona implica che le repliche possano essere stale, %
+quindi la consistenza non è garantita in modo forte in presenza di asincronia.
+Una lettura stale è tale quando i dati possono essere obsoleti presso i nodi replica, 
+crea quindi i test devono essere progettati per misurare la consistenza considerando questo effetto.
+
+
+
+
+
+\subsection{Replicazione, persistenza e implicazioni di consistenza}
+
+
+In modalità cluster (a seconda della configurazione) 
+le chiavi possono essere distribuite tra più nodi o accumulate nel primary: 
+ogni nodo può gestire una parte dei dati. 
+Questo significa che, se un client deve lavorare su informazioni salvate su nodi diversi in cunfigurazine sharding, %
+le operazioni devono essere coordinate con attenzione oppure ricostruite lato client unendo i risultati ottenuti dai vari nodi. 
+
+
+Anche gli stream, cioè flussi ordinati di messaggi, e i consumer group, cioè gruppi di processi che leggono e gestiscono %
+questi messaggi, introducono aspetti di ordinamento e distribuzione del carico. 
+Per questo sono rilevanti quando si valuta se i messaggi vengono letti ed elaborati in modo coerente.
+In sintesi, questi meccanismi mostrano che Redis non è solo un archivio semplice di coppie chiave-valore: %
+quando i dati sono distribuiti su più nodi o quando entrano in gioco flussi di messaggi, %
+la consistenza dipende anche da come il sistema coordina letture, scritture ed elaborazione.
+
+Nel test è stata usata una configurazione priva di sharding, ma questa panoramica è stata voluta per %
+dimostrare brevemente la concretezza dello strumento utilizzato.
+
+
+
+Conseguenze progettuali:
+\begin{itemize}
+    \item Per un comportamento fortemente consistente, i client dovrebbero preferire letture dal %
+primary oppure usare livelli supportati da consenso; in caso contrario, le letture dalle %
+repliche possono essere stale.
+    \item Comandi atomici come \texttt{HSET} e \texttt{LPUSH} riducono alcuni problemi di %
+concorrenza, ma non verranno trattati questi scenari. Per gestire carichi concorrenti il client python è stato gestito 
+    con un lock per serializzare le operazioni di scrittura e lettura.
+\end{itemize}
+
+
+
 
 \section{Setup sperimentale e metodologia dei test}
-Gli esperimenti sono eseguiti con orchestration containerizzata (Docker Compose) per garantire riproducibilità.
-
-
+I workload e le procedure automatizzate di test tra cui la metodologia è stata presa come spunto \cite{Jepsen} vengono eseguiti tramite orchestrazione containerizzata %
+(Docker Compose) per garantire riproducibilità e facilità di implementazione. %
+I generatori di carico sono script Python personalizzati; %
+gli eseguibili nella cartella \texttt{experiments} eseguono letture e scritture secondo gli scenari descritti sotto.
 
 
 \subsection{Test generico}
@@ -136,97 +255,20 @@ Gli esperimenti sono eseguiti con orchestration containerizzata (Docker Compose)
 \end{algorithm}
 
 
-\section{Modelli di dati in Redis}
-Questa sezione fornisce una panoramica sintetica ma completa dei tipi di dato nativi di Redis e delle loro implicazioni per storage, %
-consistenza e comportamento del sistema. L'obiettivo è spiegare come i diversi modelli di dato influenzino la correttezza dell'applicazione e come i test debbano essere progettati per esercitarli.
 
-\subsection{Panoramica}
-Redis è principalmente uno store key-value che espone diversi tipi di dato nativi \cite{RedisDocs}. %
-Ogni tipo offre garanzie semantiche e pattern d'uso differenti; queste scelte influenzano replicazione, concorrenza e recupero.
+\section{API e workload}
 
-\subsection{Tipi principali e proprietà}
-\begin{itemize}
-    \item \textbf{Stringhe}: valori binary-safe per contatori e payload piccoli; operazioni atomiche \texttt{SET}/\texttt{GET}.
-    \item \textbf{Hash}: mappe campo/valore per record ad oggetto e aggiornamenti parziali.
-    \item \textbf{Liste}: collezioni ordinate (push/pop) per code e log temporali.
-    \item \textbf{Set}: collezioni non ordinate di elementi unici con test di appartenenza.
-    \item \textbf{Sorted set (zset)}: elementi con punteggio per query di intervallo e ranking.
-    \item \textbf{Stream}: log append-only con consumer group per elaborazione durevole.
-    \item \textbf{Tipi specializzati}: bitmap, HyperLogLog ed estensioni geospaziali per analisi e riepiloghi compatti.
-\end{itemize}
-
-\subsection{Data Model example}
-
-Questa sezione collega i principali modelli di dato di Redis ai casi d'uso concreti in cui hanno senso, %
-e chiarisce quale problema applicativo ciascuno aiuta a risolvere.
-
-\begin{itemize}
-    \item \textbf{Stringhe}: sono la scelta corretta per valori atomici, contatori, cache di piccole dimensioni %
-e flag di stato. Risolvono il problema del salvataggio semplice chiave-valore e supportano operazioni %
-rapide e atomiche come aggiornamenti, letture e incrementi.
-    \item \textbf{Hash}: sono utili quando un'entità ha molti attributi, ad esempio un profilo utente, un record %
-prodotto o una configurazione. Risolvono il problema di aggiornare solo alcuni campi senza riscrivere %
-tutto l'oggetto.
-    \item \textbf{Liste}: sono adatte a code di lavoro, feed temporali, log append-only e buffer di messaggi. %
-Risolvono il problema dell'ordinamento degli elementi e dell'elaborazione FIFO/LIFO.
-    \item \textbf{Set}: sono indicate per rappresentare collezioni di elementi unici, come tag, utenti online %
-o insiemi di appartenenza. Risolvono il problema dei duplicati e rendono efficienti test di membership %
-e operazioni insiemistiche.
-    \item \textbf{Sorted set (zset)}: sono utili per classifiche, leaderboard, priorità e range di punteggio, %
-ad esempio top utenti o job scheduling. Risolvono il problema dell'ordinamento dinamico con punteggi %
-aggiornabili.
-    \item \textbf{Stream}: sono adatti a pipeline di eventi, telemetria e processing distribuito con consumer group. %
-Risolvono il problema dell'ingestione ordinata dei messaggi e della loro elaborazione affidabile.
-    \item \textbf{Tipi specializzati}: bitmap, HyperLogLog e strutture geospaziali sono utili per casi come %
-conteggi approssimati, tracciamento di flag compatti e query geografiche. Risolvono problemi di spazio, %
-cardinalità approssimata e rappresentazione efficiente di dati derivati.
-\end{itemize}
-
-Nel nostro esperimento, però, questi modelli non vengono esercitati tutti: il workload di test usa %
-principalmente la struttura \textbf{String}, tramite operazioni \texttt{SET}/\texttt{GET}, perché l'obiettivo è %
-misurare disponibilità, consistenza e tolleranza ai guasti del cluster nel caso più semplice e controllabile.
-
-
-\subsection{Replicazione, persistenza e implicazioni di consistenza}
-Redis supporta la replicazione asincrona (primary-replica). La replicazione asincrona %
-implica che le repliche possano essere in ritardo e possano restituire dati obsoleti %
-se usate per le letture.
-
-In modalità cluster, le chiavi sono partizionate tra i nodi; le operazioni cross-shard %
-richiedono coordinamento accurato oppure aggregazione lato client. Gli stream e i %
-consumer group introducono semantiche di ordinamento e partizionamento che sono %
-rilevanti quando si valuta la consistenza dell'elaborazione dei messaggi.
-
-Conseguenze progettuali:
-\begin{itemize}
-    \item Per un comportamento fortemente consistente, i client dovrebbero preferire letture dal %
-primary oppure usare livelli supportati da consenso; in caso contrario, le letture dalle %
-repliche possono essere stale.
-    \item Comandi atomici come \texttt{HSET} e \texttt{LPUSH} riducono alcuni problemi di %
-concorrenza, ma non verranno trattati questi scenari.
-\end{itemize}
-
-
-\section{Setup sperimentale e metodologia dei test}
-I workload e le procedure automatizzate di test \cite{Jepsen}, %
-tutti gli esperimenti e procedure verranno eseguite tramite orchestrazione containerizzata %
-(Docker Compose) per garantire riproducibilità. I generatori di %
-carico sono client Python personalizzati; gli script nella cartella \texttt{experiments} %
-eseguono letture e scritture secondo gli scenari descritti sotto.
-
-\subsection{API e workload}
-
-Di seguito sono elencati i componenti principali del sistema di test e le principali chiamate %
-API utilizzate per generare carico e misurare il comportamento del cluster Redis \cite{RedisDocs}. %
+Sotto una breve descrizione dei test e delle chiamate API usate per generare carico e misurare %
+il comportamento del cluster Redis. %
 Non sempre si tratta di chiamate esposte direttamente dal client Redis ufficiale, %
-ma di funzioni wrapper che orchestrano le operazioni e registrano i log.
+ma a volte sono state progettate apposite funzioni wrapper che orchestrano le operazioni e registrano i log.
 
 
 \begin{itemize}
     \item \textbf{start\_stop\_container}: script o controlli sui container che arrestano/riavviano i nodi %
 e manipolano le regole di rete, ad esempio con \texttt{tc}, per creare partizioni.
-    \item \textbf{scan\_all}: i client registrano recupera lo stato del nodo, %
-esito e valore osservato per le letture.
+    \item \textbf{scan\_all}: i client registrano lo stato del nodo, %
+    l'esito e il valore osservato per le letture.
     \item \textbf{random\_rw\_event}: esegue operazioni casuali di lettura e scrittura.
     \item \textbf{random\_partition\_event}: esegue eventi casuali di partizionamento della rete (spegne/riavvia %
 nodi e legge/scrive dati nel frattempo).
@@ -236,61 +278,34 @@ nodi e legge/scrive dati nel frattempo).
 \subsubsection{Dettagli dei test}
 I log grezzi relativi agli esperimenti sono raccolti nella cartella \texttt{experiments/logs/} del repository; %
 il riepilogo delle esecuzioni batch è disponibile in \texttt{experiments/logs/stats.csv}. %
-Per il collegamento diretto al repository dei log si può usare una path del tipo %
-\url{https://github.com/s0SimoneP0s/BD_assignements/BD/experiments/logs} di cui ve verrà visualizzata solo la parte csv.
+Per il repository dei log si può usare il percorso %
+\url{https://github.com/s0SimoneP0s/BD_assignements/BD/experiments/logs}, dove viene mostrata solo la parte CSV.
 
 \begin{itemize}
-    \item \textbf{Test di consistenza}: le esecuzioni con \texttt{random\_event} producono un mix di letture, %
-scritture e switch del primario; il comportamento osservato serve a verificare se i tre nodi convergono allo %
-stesso stato oppure se emergono divergenze temporanee durante carico concorrente.
-    \item \textbf{Test di disponibilità}: le esecuzioni con \texttt{random\_ses\_event} e \texttt{random\_primary\_switch} %
-simulano stop/start dei container e cambi di nodo attivo; il cluster deve continuare a %
-rispondere alle operazioni di base anche quando un nodo viene momentaneamente tolto dal servizio.
-    \item \textbf{Test di partizionamento}: le esecuzioni con \texttt{random\_partition\_event} introducono una partizione %
-controllata e poi la rimuovono; il punto da osservare nei log è se il sistema continua a servire richieste e se, %
-al termine, lo stato dei nodi torna allineato.
+    \item \textbf{Test di consistenza}: le esecuzioni con \texttt{test\_consistency} verificano se il cluster mantiene un comportamento coerente sotto carico concorrente e durante i cambi di primario.
+    \item \textbf{Test di disponibilità}: le esecuzioni con \texttt{test\_availability} verificano se il cluster continua a rispondere alle operazioni di base anche in presenza di disturbi controllati.
+    \item \textbf{Test di partizionamento}: le esecuzioni con \texttt{test\_partitioning} osservano il comportamento del sistema quando la rete viene perturbata in modo controllato.
 \end{itemize}
 
 
 
 
-\section{Discussione}
-Il file \texttt{stats.csv} riassume 36 esecuzioni del piano sperimentale, ottenute variando in modo %
-sistematico il numero di thread concorrenti e il numero di operazioni locali per thread. In tutti i %
-casi il codice di uscita è pari a 0 e l'esito è \texttt{ok}, segno che gli scenari provati sono stati %
-eseguiti senza errori operativi e con comportamento stabile lungo l'intera matrice dei test.
+\section{Discussione e conclusioni}
+Il file \texttt{stats.csv} riassume 36 esecuzioni del piano sperimentale, distribuite sui tre scenari %
+\texttt{test\_consistency}, \texttt{test\_partitioning} e \texttt{test\_availability}, con valori di %
+\texttt{thread\_count} pari a \{1, 8, 32\} e \texttt{local\_test\_count} pari a \{1, 8, 32, 128\}. In %
+tutte le run il campo \texttt{exit\_code} vale 0 e \texttt{result} vale \texttt{ok}, quindi non emergono %
+fallimenti operativi né anomalie esplicite nei log.
 
-Nel complesso, il dataset descrive un sistema che mantiene la propria operatività nelle condizioni %
-osservate, anche al crescere del carico. L'aumento di \texttt{thread\_count} e di \texttt{local\_test\_count} %
-rende più gravoso l'esperimento, ma non introduce fallimenti visibili nel riepilogo; questo suggerisce una %
-buona robustezza del setup e una coerenza tra orchestrazione, workload e raccolta dei log. Dal punto di vista %
-analitico, il contenuto del CSV è quindi utile soprattutto come evidenza di ripetibilità e come base per confronti %
-quantitativi tra scenari, più che come fonte di anomalie o outlier da interpretare.
+Nel complesso, i risultati confermano che il protocollo sperimentale è ripetibile e che il cluster Redis ha %
+mantenuto un comportamento stabile in tutte le configurazioni testate. Questa stabilità è coerente con un %
+setup containerizzato e ben orchestrato, ma non basta per una validazione generale del teorema CAP: %
+lo studio mostra che, nel contesto osservato, i test sono stati eseguiti correttamente, non che il sistema %
+garantisca sempre consistenza forte o disponibilità in presenza di partizioni.
 
-
-\section{Conclusioni}
-
-Gli esperimenti svolti mostrano che, nello scenario considerato, il cluster Redis esegue in modo stabile le %
-operazioni di base anche in presenza di carico concorrente e di guasti controllati. Il risultato è %
-rilevante per lo studio dei sistemi NoSQL distribuiti perché evidenzia che, in un ambiente containerizzato %
-e ben orchestrato, il sistema osservato riesce a mantenere una buona operatività e a recuperare correttamente %
-dopo gli eventi di disturbo previsti dal piano di test.
-
-Le evidenze raccolte sono in parte coerenti con le aspettative teoriche del modello CAP: durante le condizioni %
-normali il sistema privilegia una gestione efficace delle richieste e, nei casi osservati, non emergono violazioni %
-evidenti nel comportamento complessivo. Tuttavia, questa osservazione non va interpretata come una dimostrazione %
-forte del teorema. L'assenza di errori nel log può dipendere anche dalla natura ideale del test, dalle dimensioni %
-ridotte del cluster, dal tipo di workload scelto e dall'efficienza dello strumento utilizzato per generare e monitorare %
-gli esperimenti, più che da una conferma diretta e generalizzabile delle proprietà CAP.
-
-In altre parole, i risultati indicano soprattutto che il sistema testato si comporta bene nel contesto sperimentale %
-predisposto, ma non bastano da soli a concludere che il comportamento osservato rappresenti in modo completo il %
-compromesso teorico tra consistenza, disponibilità e tolleranza alle partizioni. Per rafforzare questa analisi %
-sarebbe utile estendere il lavoro con cluster più grandi, confrontare Redis con altri sistemi NoSQL con modelli %
-di consistenza differenti e introdurre modelli di guasto più forti, ad esempio partizioni di rete più realistiche, %
-crash simultanei di più nodi, ritardi artificiali nella replica o scenari di recovery più aggressivi.
-
-Tutto questo però esula dallo scopo del progetto.
+In sintesi, il lavoro evidenzia la solidità del piano sperimentale e la sua ripetibilità, ma per trarre %
+conclusioni più forti sarebbero necessari scenari di guasto più aggressivi, cluster più ampi e metriche %
+aggiuntive sulla qualità delle risposte sotto partizione.
 
 
 \newpage

@@ -1,0 +1,321 @@
+\documentclass{article}
+\usepackage[english]{babel}
+\usepackage[utf8x]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{graphicx}
+\usepackage[colorinlistoftodos]{todonotes}
+\usepackage[colorlinks=true, allcolors=black]{hyperref} %sets hyperlink colour
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{xcolor}
+\usepackage{roboto} % for Roboto Slab font
+\usepackage{float}
+\usepackage{titling} 
+\usepackage{blindtext}\usepackage{titlesec}
+\usepackage[square,sort,comma,numbers]{natbib}
+\usepackage[colorinlistoftodos]{todonotes}
+\usepackage{tikz}
+\usepackage{geometry}
+\usepackage{sectsty}
+\usepackage{amsmath}
+\usepackage{tikzpagenodes}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{algorithm} % Algoritmi
+\usepackage{algpseudocode} % Pseudocodice
+\geometry{a4paper, margin=2cm}
+\definecolor{unimorered}{RGB}{209,65,36}
+\definecolor{unimoregrey}{RGB}{99,102,106}
+\allsectionsfont{\color{black}} %sets colour for all headers
+\usepackage{helvet}
+\renewcommand{\familydefault}{\sfdefault}
+\sectionfont{\fontfamily{RobotoSlab-TLF}\selectfont}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{document}
+
+\input{titlepage}
+
+% Abstract (placed before table of contents for academic formatting)
+\addcontentsline{toc}{section}{Abstract}
+\section*{Abstract}
+This report describes an experimental evaluation of a distributed key-value system based on Redis. The objective is to quantify system behaviour under controlled failures and network partitions, and to relate observations to the CAP theorem. The test code and orchestration scripts are available in the project repository (title page footnote) and at \url{https://github.com/USERNAME/REPOSITORY}.
+
+
+%%% Create a table of contents
+\tableofcontents
+\pagenumbering{arabic}
+\newpage
+
+\section{Requirements}
+\begin{itemize}
+    \item \textbf{Functional:} multinode Redis deployment capable of accepting concurrent reads and writes; a test harness to run workloads and inject faults.
+    \item \textbf{Non-functional:} reproducible, containerised scenarios; measurement and logging of latency, throughput, success rates and recovery time; scripts to initialise and teardown experiments.
+\end{itemize}
+
+\section{Objectives}
+\begin{itemize}
+    \item Measure trade-offs between availability and consistency under partitions.
+    \item Provide repeatable tests that simulate failures and produce machine-readable logs.
+    \item Report correctness (consistency violations) and operational metrics (latency, throughput, success rate).
+\end{itemize}
+
+\section{What we will test}
+\begin{itemize}
+    \item \textbf{Availability}: whether the system continues to accept and serve requests when some nodes fail.
+    \item \textbf{Consistency}: whether replicas converge to the same state after concurrent updates and recovery.
+    \item \textbf{Partition tolerance}: behaviour under network partitions and the guarantees preserved.
+\end{itemize}
+
+\section{Background: CAP theorem and NoSQL models}
+The \textbf{CAP theorem} states that a distributed data system can provide at most two of the following %
+three guarantees simultaneously: Consistency, Availability, and Partition tolerance \cite{Brewer2000}.
+In practice:
+
+
+- \textbf{Consistency (C)}: every read receives the most recent write %
+(linearizability/strong consistency semantics). \\
+
+- \textbf{Availability (A)}: every request to a non-failing node receives %
+a response (without guarantee that it is the most recent value). \\
+
+- \textbf{Partition tolerance (P)}: the system continues to operate despite %
+arbitrary network partitions between nodes. \\
+
+The experiments are conducted on a small, containerised cluster and are designed to measure availability, different notions of consistency, and recovery behaviour.
+
+Because real networks can partition, production systems must tolerate partitions (P). Designers therefore trade stronger consistency against stronger availability during partitions; common outcomes are:
+
+\begin{itemize}
+    \item CP (Consistency + Partition tolerance): some nodes refuse requests during partitions to preserve consistency; availability is reduced.
+    \item AP (Availability + Partition tolerance): nodes continue serving requests during partitions but may return stale or divergent data; reconciliation is required after healing.
+\end{itemize}
+
+\subsection{Deeper aspects and testing focus}
+We consider several dimensions when testing CAP-related behaviour:
+\begin{itemize}
+    \item \textbf{Consistency level:} strong vs eventual; verify whether reads reflect recent writes under concurrent workloads.
+    \item \textbf{Failure and recovery semantics:} node rejoin speed and state reconciliation (anti-entropy, vector clocks, CRDTs).
+    \item \textbf{Observable availability:} request success rate and latency during and after failures.
+    \item \textbf{Partition models:} symmetric partitions, one-way partitions, and transient dropouts; each produces different observable effects.
+\end{itemize}
+
+The tests measure correctness (consistency violations) and operational metrics (latency, error rates, recovery time). This work focuses on Redis as a case study; the methodology generalises to other key-value stores.
+
+\section{Redis data models}
+This section provides a concise but thorough overview of Redis %
+data types and their implications for storage, consistency, and %
+system behaviour. The goal is to explain how different data models %
+influence application correctness and how tests should be designed to exercise them.
+
+\subsection{Overview}
+Redis is primarily a key-value store that exposes a variety of native data types \cite{RedisDocs}. Each type provides different semantic guarantees and common usage patterns; these choices affect replication, concurrency and recovery behaviour.
+
+\subsection{Primary Redis types and properties}
+\begin{itemize}
+    \item \textbf{Strings}: binary-safe values for counters and small payloads; atomic `SET`/`GET`.
+    \item \textbf{Hashes}: field/value maps for object-like records and partial updates.
+    \item \textbf{Lists}: ordered collections (push/pop) for queues and logs.
+    \item \textbf{Sets}: unordered unique-element collections with membership tests.
+    \item \textbf{Sorted Sets (zsets)}: scored elements supporting range and ranking queries.
+    \item \textbf{Streams}: append-only logs with consumer groups for durable processing.
+    \item \textbf{Specialized types}: bitmaps, HyperLogLog, and geospatial extensions for analytics and compact summaries.
+\end{itemize}
+
+\subsection{Replication, persistence and consistency implications}
+Redis supports asynchronous replication (primary-replica) and optional persistence (RDB/AOF). %
+Asynchronous replication implies that replicas may lag and can return stale data if served for reads.
+In cluster mode, keys are sharded across nodes; cross-shard operations require %
+careful coordination or client-side aggregation.
+Streams and consumer groups introduce ordering and partitioning semantics %
+which are relevant when evaluating consistency of message processing.
+
+Design consequences:
+\begin{itemize}
+    \item For strong consistency, prefer reads from the primary or use consensus-backed layers; replica reads can be stale.
+    \item Atomic commands (HSET, LPUSH) reduce some concurrency issues, but multi-key transactions and cross-shard updates remain difficult.
+\end{itemize}
+
+\subsection{How Redis data models affect tests}
+When designing tests:
+\begin{itemize}
+    \item Exercise the actual operations used by the application (hash updates, stream appends, zset score changes).
+    \item For availability: measure behaviour during primary failure and replica promotion (in-flight operations, data loss, promotion latency).
+    \item For partitions: test single-key and multi-key scenarios (multi-key exposes coordination anomalies sooner).
+    \item Include replica-read workloads to quantify staleness windows between primary writes and replica visibility.
+\end{itemize}
+
+\subsection{Recommended verification checks}
+\begin{itemize}
+    \item \textbf{Value correctness:} confirm application-level invariants after recovery (e.g., counters, no duplicate deliveries).
+    \item \textbf{Staleness windows:} timestamp writes and first-seen-on-replica events to compute replica lag distribution.
+    \item \textbf{Idempotency and retries:} verify repeated writes and retry behaviour do not break correctness.
+\end{itemize}
+
+These guidelines ensure that the experimental evaluation captures the interplay between Redis data models and the CAP-driven trade-offs being studied.
+
+\section{Experimental setup and test methodology}
+This section describes the environment, workloads and the automated test %
+procedures. All experiments are executed using container orchestration %
+(Docker Compose or similar) to ensure reproducibility. Workload generators %
+may be either YCSB or custom Python clients; the scripts included in %
+\texttt{experiments} perform writes and reads according to the scenario described below.
+
+\subsection{Environment}
+\begin{itemize}
+    \item \textbf{Fault injection:} scripts or container controls that stop/start nodes and manipulate network rules (e.g., \texttt{tc}) to create partitions.
+    \item \textbf{Measurements:} clients log timestamps, operation type, latency, success/failure and observed values.
+    \item \textbf{Operation mix:} configurable read/write ratios; include high-write and read-dominant scenarios.
+\end{itemize}
+
+\begin{algorithm}
+\caption{Availability Test (detailed)}
+\begin{algorithmic}[1]
+\Procedure{AvailabilityTest}{N, MT\_COUNT, LOCAL\_TEST\_COUNT}
+    \State Start cluster with N nodes and warm up clients
+    \State masterConn $\gets$ RedisConnector()
+    \State masterSuite $\gets$ RedisClusterTestSuite(masterConn)
+
+    \State Spawn MT\_COUNT worker threads
+    \For{$thread = 1$ \textbf{to} $MT\_COUNT$}
+        \State conn $\gets$ RedisConnector()
+        \State suite $\gets$ RedisClusterTestSuite(conn)
+        \State \Comment{start new thread: WorkerLoop(conn, suite, LOCAL\_TEST\_COUNT)}
+    \EndFor
+
+    \State wait for all threads to join
+    \State aggregate each worker's history into masterSuite.history
+
+    \State \Comment{Evaluate availability from aggregated history}
+    \State failures \gets 0
+    \ForAll{entry \textbf{in} masterSuite.history}
+        \If{any field in entry has value \texttt{==} \textbf{NULL}}
+            \State failures $\gets$ failures + 1
+        \EndIf
+    \EndFor
+
+    \If{failures == 0}
+        \State report ``Available'' and compute success-rate, latency stats
+    \Else
+        \State report ``Not Available'' and list failing events for post-mortem
+    \EndIf
+\EndProcedure
+
+\Procedure{WorkerLoop}{conn, suite, LOCAL\_TEST\_COUNT}
+    \For{$i = 1$ \textbf{to} $LOCAL\_TEST\_COUNT$}
+        \State suite.random\_ses\_event() \Comment{stop/start a node}
+        \State suite.random\_rw\_event() \Comment{read/write workload}
+        \State suite.random\_primary\_switch() \Comment{simulate promotion/switchover}
+        \State \Comment{append recent suite.history entries to thread-local buffer}
+    \EndFor
+    \State \Comment{return thread-local buffer}
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+% Simplified version of the Availability Test
+\begin{algorithm}
+\caption{Availability Test (simplified)}
+\begin{algorithmic}[1]
+\Procedure{AvailabilityTestSimple}{N, MT\_COUNT, LOCAL\_TEST\_COUNT}
+    \State Start cluster with $N$ nodes
+    \State Spawn $MT\_COUNT$ worker threads
+    \For{$t = 1$ \textbf{to} $MT\_COUNT$}
+        \State Start worker thread that performs $LOCAL\_TEST\_COUNT$ operations:
+        \State \quad for each operation: perform a read or write and log (time, op, result)
+    \EndFor
+    \State Wait for all workers to finish and collect logs
+    \State Compute availability = successful requests / total requests
+    \State Report availability, latency percentiles, and failure events
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+\subsection*{Spiegazione dei parametri}
+Di seguito si fornisce una spiegazione semplice e concisa dei due parametri usati nell'algoritmo:
+\begin{itemize}
+    \item \textbf{\texttt{MT\_COUNT}}: numero di thread (o processi) concorrenti che vengono lanciati globalmente. Ogni thread simula un client indipendente ed esegue un flusso di operazioni (letture/scritture). Aumentare \texttt{MT\_COUNT} aumenta la concorrenza totale e la pressione sul cluster.
+    \item \textbf{\texttt{LOCAL\_TEST\_COUNT}}: numero di operazioni eseguite da ciascun worker/thread. Definisce la lunghezza del carico di lavoro locale per ogni client. Il totale delle operazioni totali eseguite `e pari a $MT\_COUNT \times LOCAL\_TEST\_COUNT$.
+\end{itemize}
+
+\noindent Consigli pratici:
+\begin{itemize}
+    \item Per test brevi e ad alta concorrenza: scegliere \texttt{MT\_COUNT} alto e \texttt{LOCAL\_TEST\_COUNT} basso (molti client, poche operazioni ciascuno).
+    \item Per test di throughput stabile: scegliere \texttt{MT\_COUNT} moderato e \texttt{LOCAL\_TEST\_COUNT} alto (client stabili che generano a lungo carico continuo).
+\end{itemize}
+
+\begin{algorithm}
+\caption{Consistency Test}
+\begin{algorithmic}[1]
+\State Start cluster with replication enabled
+\State Spawn concurrent writers targeting the same key(s)
+\State While writers active, read from multiple replicas and log observed values
+\State After writes complete, allow replication to settle for a period S
+\State Verify that all replicas converge to an equivalent state
+\State Report any divergence windows (time intervals with inconsistent reads)
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}
+\caption{Partitioning Test}
+\begin{algorithmic}[1]
+\State Start cluster and establish steady-state operation
+\State Introduce network partition between node groups A and B
+\State During partition: run reads/writes against both partitions and record results
+\If{system favors availability}
+    \State expect continued responses, possibly divergent state
+\Else
+    \State expect operations blocked to preserve consistency
+\EndIf
+\State Heal partition and observe reconciliation process and correctness checks
+\end{algorithmic}
+\end{algorithm}
+
+
+\section{Results and how to present them}
+Actual measured results should be added here after experiments run. For each scenario include:
+\begin{itemize}
+    \item Tables/plots of latency distributions (P50, P95, P99) and throughput.
+    \item Time-series of availability (successful requests/s) and error spikes during faults.
+    \item Consistency observations: annotated examples of stale reads or lost updates with timestamps and client traces.
+\end{itemize}
+
+Provide a short narrative per experiment summarising the main observations and link to raw logs in the repository.
+
+\section{Discussion}
+Discuss the implications of the measurements with respect to the CAP theorem and NoSQL design choices. Comment on limitations of the testbed (small cluster size, synthetic workloads) and on the reproducibility of the results.
+
+\section{Conclusions}
+Summarise the experimental findings and their relevance to the study of distributed NoSQL systems. State concrete conclusions about whether the observed behaviour aligns with theoretical expectations from CAP, and propose possible extensions (larger clusters, different systems, stronger failure models).
+
+\section*{Acknowledgements}
+The author thanks the course instructors and any colleagues who assisted with the experiments. 
+
+% Duplicate methodology/results/discussion removed (merged earlier)
+% See earlier `Experimental setup and test methodology' and `Results' sections.
+
+\newpage
+\addcontentsline{toc}{section}{References}
+\bibliographystyle{apalike}
+\bibliography{ref}
+
+\newpage
+\appendix
+\section{Additional graphs and data}
+
+\end{document}
+
+
+
+%All other official TU Delft colours
+\definecolor{donkerblauw}{RGB}{12, 35, 64}
+\definecolor{turkoois}{RGB}{0, 184, 200}
+\definecolor{blauw}{RGB}{0, 118, 194}
+\definecolor{paars}{RGB}{111, 29, 119}
+\definecolor{roze}{RGB}{239, 96, 163}
+\definecolor{framboos}{RGB}{165, 0, 52}
+\definecolor{rood}{RGB}{224, 60, 49}
+\definecolor{oranje}{RGB}{237, 104, 66}
+\definecolor{geel}{RGB}{255, 184, 28}
+\definecolor{lichtgroen}{RGB}{108, 194, 74}
+\definecolor{donkergroen}{RGB}{0, 155, 119}
+%You can use these to change the hyperlink colour or the colour of the header or whatever. Glück Auf!
