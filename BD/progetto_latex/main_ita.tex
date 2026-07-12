@@ -91,29 +91,23 @@ Di seguito una panoramica dei tipi di dato principali, coerente con la documenta
 \subsection{Panoramica}
 Redis è principalmente uno store key-value che espone diversi tipi di dato nativi \cite{RedisDocs}. %
 Ogni tipo offre garanzie semantiche e pattern d'uso differenti; queste scelte influenzano replicazione, concorrenza e recupero.
+Abbiamo scelto appositamente questo strumento perché unisce un insieme molto ricco di funzionalità %
+a un uso pratico semplice sia a livello implementativo, sia nella fase di deploy sia durante la %
+configurazione del sistema. %
 
 
-\subsection{Introduzione}
-\begin{itemize}
-    \item \textbf{Stringhe}: valori binary-safe per contatori e payload piccoli; comandi atomici `SET`/`GET`.
-    \item \textbf{Hash}: mappe campo/valore per record ad oggetto e aggiornamenti parziali.
-    \item \textbf{Liste}: collezioni ordinate (push/pop) per code e log.
-    \item \textbf{Set}: collezioni non ordinate di elementi unici con test di appartenenza.
-    \item \textbf{Sorted Sets (zsets)}: elementi con punteggio per query di range e ranking.
-    \item \textbf{Streams}: log append-only con consumer group per processing durevole.
-\end{itemize}
+\subsection{Modelli di dati in Redis}
+L’obiettivo non è mostrare come anche il modello influenzi la correttezza %
+dell’applicazione, ma guidare la progettazione dei test per verificarli adeguatamente in un caso base. %
+
+
 
 Idealmente il sistema gestisce separatamente le strutture dati dalla logica di partizionamento e replicazione, 
 quindi verrà testato il comportamento di una struttura dati campione.
 
 
-
-\subsection{Modelli di dati in Redis}
-Sintetizziamo i tipi di dato nativi di Redis, evidenziando implicazioni su storage, %
-consistenza e comportamento. L’obiettivo è mostrare come ogni modello influenzi la correttezza %
-dell’applicazione e guidare la progettazione dei test per verificarli adeguatamente. %
-Colleghiamo poi ciascun tipo a casi d’uso concreti, chiarendo il problema applicativo che aiuta a risolvere.
-
+Qua a seguito una veloce panoramica dei principali tipi di dato in Redis, con esempi di utilizzo e pattern d'uso tipici %
+utilizzando API python. %
 
 \begin{itemize}
     \item \textbf{Stringhe}: sono la scelta corretta per valori atomici, contatori, cache di piccole dimensioni %
@@ -177,52 +171,71 @@ principalmente la struttura \textbf{String}, tramite operazioni \texttt{SET}/\te
 misurare disponibilità, consistenza e tolleranza ai guasti del cluster nel caso più semplice e controllabile.
 
 
+\section{Progettazione e architetture supportate}
 
-
-\subsection{Replicazione, persistenza e implicazioni di consistenza}
-Redis è stato scelto perché unisce un insieme molto ricco di funzionalità a un uso pratico semplice, sia a livello implementativo sia nella fase di deploy e configurazione del sistema. %
-La replicazione asincrona implica che le repliche possano essere stale, %
-quindi la consistenza non è garantita in modo forte in presenza di asincronia.
-Una lettura stale è tale quando i dati possono essere obsoleti presso i nodi replica, 
-crea quindi i test devono essere progettati per misurare la consistenza considerando questo effetto.
-
-
-
-
+Redis è un archivio dati in-memory che opera come database persistente tramite posix %
+COW snapshot. La sua architettura è ottimizzata per garantire latenze estremamente %
+ridotte, delegando la gestione della durabilità e della distribuzione a meccanismi %
+configurabili. 
 
 \subsection{Replicazione, persistenza e implicazioni di consistenza}
-
 
 In modalità cluster (a seconda della configurazione) 
-le chiavi possono essere distribuite tra più nodi o accumulate nel primary: 
-ogni nodo può gestire una parte dei dati. 
-Questo significa che, se un client deve lavorare su informazioni salvate su nodi diversi in cunfigurazine sharding, %
-le operazioni devono essere coordinate con attenzione oppure ricostruite lato client unendo i risultati ottenuti dai vari nodi. 
+le chiavi possono essere distribuite tra più nodi o accumulate nel primary e poi %
+distribuite tra i master (sharded).
+Questo significa che, se un client deve lavorare su informazioni salvate su nodi %
+diversi in configurazione sharding, %
+le operazioni devono essere coordinate con attenzione oppure ricostruite lato client %
+unendo i risultati ottenuti dai vari nodi. 
 
-
-Anche gli stream, cioè flussi ordinati di messaggi, e i consumer group, cioè gruppi di processi che leggono e gestiscono %
+Anche gli stream, cioè flussi ordinati di messaggi, e i consumer group, cioè gruppi %
+di processi che leggono e gestiscono %
 questi messaggi, introducono aspetti di ordinamento e distribuzione del carico. 
-Per questo sono rilevanti quando si valuta se i messaggi vengono letti ed elaborati in modo coerente.
-In sintesi, questi meccanismi mostrano che Redis non è solo un archivio semplice di coppie chiave-valore: %
-quando i dati sono distribuiti su più nodi o quando entrano in gioco flussi di messaggi, %
-la consistenza dipende anche da come il sistema coordina letture, scritture ed elaborazione.
+Per questo sono rilevanti quando si valuta se i messaggi vengono letti ed elaborati %
+in modo coerente.
+Ciò dimostra che Redis non è solo un archivio semplice di coppie chiave-valore: %
+quando i dati sono distribuiti su più nodi o quando entrano in gioco flussi di messaggi %
+intra-cluster, %
+tutt'altro che banali.
 
-Nel test è stata usata una configurazione priva di sharding, ma questa panoramica è stata voluta per %
-dimostrare brevemente la concretezza dello strumento utilizzato.
-
-
+Nel test è stata usata una configurazione priva di sharding.
 
 Conseguenze progettuali:
 \begin{itemize}
-    \item Per un comportamento fortemente consistente, i client dovrebbero preferire letture dal %
-primary oppure usare livelli supportati da consenso; in caso contrario, le letture dalle %
-repliche possono essere stale.
-    \item Comandi atomici come \texttt{HSET} e \texttt{LPUSH} riducono alcuni problemi di %
-concorrenza, ma non verranno trattati questi scenari. Per gestire carichi concorrenti il client python è stato gestito 
-    con un lock per serializzare le operazioni di scrittura e lettura.
+    \item Per un comportamento fortemente consistente, i client dovrebbero %
+preferire letture dal %
+primary oppure usare livelli supportati da consenso; in caso contrario, le %
+letture dalle %
+repliche possono essere "Soft state".
+    \item Comandi atomici come \texttt{HSET} e \texttt{LPUSH} riducono alcuni %
+problemi di %
+concorrenza, ma non verranno trattati questi scenari. Per gestire carichi %
+concorrenti il client python è stato gestito %
+con un lock per serializzare le operazioni di scrittura e lettura.
 \end{itemize}
 
 
+\subsection{Atomicità}
+Redis utilizza un'architettura \textbf{single-threaded} per l'elaborazione dei comandi. Questo semplifica la gestione %
+della concorrenza: ogni comando viene eseguito in modo sequenziale e atomico, eliminando la necessità di lock complessi %
+internamente al database e garantendo che le operazioni sulle strutture dati siano sempre consistenti a livello di singolo nodo.
+
+
+\subsection{Cluster Sharding}
+In configurazione Cluster Sharded, la distribuzione dei dati avviene tramite %
+gli \textbf{hash slot}. Lo spazio delle chiavi è diviso in 16.384 slot %
+distribuiti tra i nodi master tramite hash function. %
+Questo meccanismo permette di scalare il sistema aggiungendo nodi e %
+ridistribuendo gli slot in modo trasparente.
+
+\subsection{Persistenza}
+Per la durabilità dei dati, Redis offre due meccanismi:
+\begin{itemize}
+    \item \textbf{RDB (Redis Database Backup)}: snapshot puntuali del dataset a intervalli definiti. È efficiente per i riavvii ma può comportare perdite di dati tra uno snapshot e l'altro.
+    \item \textbf{AOF (Append-Only File)}: un log di tutte le operazioni di %
+scrittura. Garantisce una persistenza maggiore (quasi real-time) a fronte %
+di file di log più grandi. Soggetto attenzionato dal test di partizionamento.
+\end{itemize}
 
 
 \section{Setup sperimentale e metodologia dei test}
