@@ -24,13 +24,20 @@ The server is exposed on:
 
 ## Start the Environment
 
-From the project directory:
+From the project directory, the Compose file expects the built image to be named `sail-local:latest`:
+
+```bash
+docker build -t sail-local:latest .
+docker compose up -d
+```
+
+The recommended command when you want Compose to rebuild the image is:
 
 ```bash
 docker compose up -d --build
 ```
 
-This is the recommended command for a continuous build, so the image is rebuilt whenever the local Docker configuration changes.
+This rebuilds the image whenever the local Docker configuration changes.
 
 Check the status:
 
