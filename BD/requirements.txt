@@ -12,7 +12,12 @@ geopandas
 umap-learn 
 statsmodels
 scipy     
-pyspark
+pyspark==4.1.2
 redis
 hiredis    
 pip
+PyArrow >=15.0.0 
+graphframes 
+grpcio 
+grpcio-status 
+zstandard

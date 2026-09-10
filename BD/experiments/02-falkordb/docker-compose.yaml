@@ -1,0 +1,77 @@
+services:
+  falkordb-node-1:
+    image: falkordb/falkordb:latest-alpine
+    container_name: falkordb-node-1
+    command: >
+      redis-server
+      --port 6379
+      --cluster-enabled yes
+      --cluster-config-file nodes.conf
+      --cluster-node-timeout 5000
+      --appendonly yes
+    ports:
+      - "6379:6379"
+      - "3000:3000"
+    volumes:
+      - /mnt/falkordb1:/var/lib/falkordb/data
+    networks:
+      - falkordb-cluster
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6379", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  falkordb-node-2:
+    image: falkordb/falkordb:latest-alpine
+    container_name: falkordb-node-2
+    command: >
+      redis-server
+      --port 6379
+      --cluster-enabled yes
+      --cluster-config-file nodes.conf
+      --cluster-node-timeout 5000
+      --appendonly yes
+    ports:
+      - "6380:6379"
+      - "3001:3000"
+    volumes:
+      - /mnt/falkordb2:/var/lib/falkordb/data
+    networks:
+      - falkordb-cluster
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6379", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  falkordb-node-3:
+    image: falkordb/falkordb:latest-alpine
+    container_name: falkordb-node-3
+    command: >
+      redis-server
+      --port 6379
+      --cluster-enabled yes
+      --cluster-config-file nodes.conf
+      --cluster-node-timeout 5000
+      --appendonly yes
+    ports:
+      - "6381:6379"
+      - "3002:3000"
+    volumes:
+      - /mnt/falkordb3:/var/lib/falkordb/data
+    networks:
+      - falkordb-cluster
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6379", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+networks:
+  falkordb-cluster:
+    driver: bridge
+

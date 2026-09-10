@@ -6,7 +6,7 @@ It is a pragmatic test to observe eventual vs strong consistency characteristics
 """
 
 import logging
-from _suite import RedisConnector, RedisClusterTestSuite
+from exam.BD.experiments.redis._suite import RedisConnector, RedisClusterTestSuite
 from pprint import pp
 import threading
 import sys

@@ -1,0 +1,3 @@
+pyspark==4.1.2
+PyArrow>=15.0.0 
+graphframes

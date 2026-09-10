@@ -1,0 +1,57 @@
+services:
+  sail-server:
+    build:
+      context: . # use docker compose up -d --build for continuous building
+      dockerfile: Dockerfile
+    image: sail-local:latest
+    container_name: sail-server
+    command:
+      - spark
+      - server
+      - --ip
+      - 0.0.0.0
+      - --port
+      - "50051"
+    ports:
+      - "6066:50051"
+    volumes:
+      - ./data-server:/opt/sail/data
+    networks:
+      - sail-cluster
+    restart: unless-stopped
+
+#  sail-worker:
+#    image: sail-local:latest
+#    container_name: sail-worker
+#    command:
+#      - worker
+#    networks:
+#      - sail-cluster
+#    depends_on:
+#      - sail-server
+#    restart: unless-stopped
+
+#  sail-driver-debug:
+#    image: python:3.10-slim
+#    container_name: sail-driver-debug
+#    command:
+#      - /bin/bash
+#      - -lc
+#      - sleep infinity
+#    environment:
+#      PYTHONUNBUFFERED: "1"
+#      SPARK_REMOTE: "sc://sail-server:50051"
+#    ports:
+#      - "4040:4040"
+#    volumes:
+#      - ./jobs:/opt/sail/jobs
+#      - ./data-driver:/opt/sail/data
+#    networks:
+#      - sail-cluster
+#    depends_on:
+#      - sail-server
+#    restart: unless-stopped
+
+networks:
+  sail-cluster:
+    driver: bridge

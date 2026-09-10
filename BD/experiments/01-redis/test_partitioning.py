@@ -13,7 +13,7 @@ from pprint import pp
 import sys
 import argparse
 
-from _suite import (
+from exam.BD.experiments.redis._suite import (
     RedisConnector,
     RedisClusterTestSuite,
 )

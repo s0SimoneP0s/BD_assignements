@@ -1,0 +1,6 @@
+pyspark==4.1.2
+PyArrow
+graphframes
+grpcio
+grpcio-status
+zstandard

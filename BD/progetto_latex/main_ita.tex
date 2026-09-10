@@ -37,11 +37,26 @@
 
 \addcontentsline{toc}{section}{Sommario}
 \section*{Sommario}
-Questo rapporto presenta una valutazione sperimentale di un sistema distribuito NoSQL basato su Redis. %
-L'obiettivo è misurare il comportamento del sistema sotto guasti controllati e partizioni di rete, %
-collegando le osservazioni al teorema CAP. Il codice dei test e gli script di orchestrazione sono %
+
+Questo documento presenta una valutazione sperimentale completa di un sistema distribuito NoSQL inizialmente basato su Redis. %
+La ricerca ha seguito un percorso strutturato in tre fasi incrementali partendo da pileline di esempio e sui concreti.
+
+Inizialmente si è testato il comportamento del sistema sotto guasti controllati e partizioni di rete, %
+analizzando le osservazioni alla luce del teorema CAP per verificare la stabilità necessaria alla gestione di %
+grandi volumi di dati critici.
+
+Nella seconda fase, abbiamo incrementalmente aggiunto FalkorDB (Redis-based) per sostituire Neo4j %
+in una pipeline esistente, dimostrando che %
+FalkorDB può mantenere ottime garanzie di stabilità del sistema, ma ha differenti approcci per la gestione %
+dei dati e delle transazioni rispetto a Neo4j.
+
+Per garantire la stabilità del sistema, sono stati condotti test approfonditi che simulano guasti e %
+partizioni di rete, monitorando attentamente il comportamento dei nodi e la consistenza dei dati.
+
+Il codice dei test e gli script di orchestrazione sono %
 disponibili nel repository del progetto e su %
 \url{https://github.com/s0SimoneP0s/BD_assignements}.
+
 
 
 \tableofcontents
@@ -50,10 +65,8 @@ disponibili nel repository del progetto e su %
 
 \section{Requisiti}
 \begin{itemize}
-    \item \textbf{Funzionali:} deploy Redis multinodo capace di accettare letture e scritture concorrenti; %
+    \item \textbf{Funzionali:} deploy container multinodo capace di accettare letture e scritture concorrenti; %
     accesso al cluster tramite localhost per eseguire workload e iniettare guasti.
-    \item \textbf{Non-funzionali:} scenari containerizzati e riproducibili; misurazione e log di tassi di %
-    successo; script per inizializzare e ripristinare gli esperimenti.
 \end{itemize}
 
 \section{Obiettivi}
@@ -61,9 +74,12 @@ disponibili nel repository del progetto e su %
     \item Misurare i compromessi tra disponibilità e consistenza durante partizioni se evidenziati.
     \item Fornire test ripetibili che simulino guasti e producano log leggibili dalla macchina.
     \item Riportare la correttezza (violazioni di consistenza) e metriche operative.
+    \item Provare la portabilità del codice Neo4j verso FalkorDB, %
+    dimostrando che la pipeline dati può essere eseguita con un comportamento simile con un effort controllato.
+    \item Scalare ulteriormente la computazione utilizzando Spark.
 \end{itemize}
 
-\section{Cosa testeremo: teorema CAP e modelli NoSQL}
+\section{Ambito sperimentale e ipotesi CAP}
 
 Il \textbf{teorema CAP} afferma che un sistema dati distribuito può fornire al massimo %
 due delle seguenti tre garanzie simultaneamente: Consistenza, Disponibilità e Tolleranza %
@@ -83,10 +99,9 @@ Gli esperimenti sono condotti in un contesto ideale: un piccolo cluster containe
 I test sono progettati per misurare disponibilità, diverse nozioni di consistenza e comportamento di recupero.
 
 
-\section{Redis data model e implicazioni per i test}
+\section{Redis data model and CAP implications}
 Redis è un sistema ricco di funzionalità, ma nel contesto di questo lavoro si presta a un uso semplice: è facile da deployare, configurare e integrare nel cluster di test. In particolare, %
 useremo solo la parte più essenziale, il \textbf{String key-value}. %
-Di seguito una panoramica dei tipi di dato principali, coerente con la documentazione ufficiale di Redis.
 
 \subsection{Panoramica}
 Redis è principalmente uno store key-value che espone diversi tipi di dato nativi \cite{RedisDocs}. %
@@ -101,10 +116,8 @@ L’obiettivo non è mostrare come anche il modello influenzi la correttezza %
 dell’applicazione, ma guidare la progettazione dei test per verificarli adeguatamente in un caso base. %
 
 
-
 Idealmente il sistema gestisce separatamente le strutture dati dalla logica di partizionamento e replicazione, 
 quindi verrà testato il comportamento di una struttura dati campione.
-
 
 Qua a seguito una veloce panoramica dei principali tipi di dato in Redis, con esempi di utilizzo e pattern d'uso tipici %
 utilizzando API python. %
@@ -171,7 +184,9 @@ principalmente la struttura \textbf{String}, tramite operazioni \texttt{SET}/\te
 misurare disponibilità, consistenza e tolleranza ai guasti del cluster nel caso più semplice e controllabile.
 
 
-\section{Progettazione e architetture supportate}
+%---------------------------------------------------------------------
+
+\subsection{Architettura Redis di riferimento}
 
 Redis è un archivio dati in-memory che opera come database persistente tramite posix %
 COW snapshot. La sua architettura è ottimizzata per garantire latenze estremamente %
@@ -238,8 +253,8 @@ di file di log più grandi. Soggetto attenzionato dal test di partizionamento.
 \end{itemize}
 
 
-\section{Setup sperimentale e metodologia dei test}
-I workload e le procedure automatizzate di test tra cui la metodologia è stata presa come spunto \cite{Jepsen} vengono eseguiti tramite orchestrazione containerizzata %
+\subsection{Test setup sperimentale}
+I workload e le procedure automatizzate di test tra cui la metodologia è stata presa come esempio \cite{Jepsen} vengono eseguiti tramite orchestrazione containerizzata %
 (Docker Compose) per garantire riproducibilità e facilità di implementazione. %
 I generatori di carico sono script Python personalizzati; %
 gli eseguibili nella cartella \texttt{experiments} eseguono letture e scritture secondo gli scenari descritti sotto.
@@ -260,7 +275,7 @@ gli eseguibili nella cartella \texttt{experiments} eseguono letture e scritture 
     \State Lanciare $T$ thread worker
     \For{$t = 1$ \textbf{to} $T$}
         \State Ogni worker esegue $N$ operazioni locali e casuali: 
-        \State \quad per ciascuna e registra (timestamp, operazione, risultato)
+        \State \quad per ciascuna ne registra (timestamp, operazione, risultato)
     \EndFor
     \State Attendere il completamento dei worker e raccogliere i log
 \EndProcedure
@@ -269,7 +284,7 @@ gli eseguibili nella cartella \texttt{experiments} eseguono letture e scritture 
 
 
 
-\section{API e workload}
+\subsection{API e workload}
 
 Sotto una breve descrizione dei test e delle chiamate API usate per generare carico e misurare %
 il comportamento del cluster Redis. %
@@ -302,8 +317,477 @@ Per il repository dei log si può usare il percorso %
 
 
 
+%---------------------------------------------------------------------
+%    FalkorDB Redis plugin
+%---------------------------------------------------------------------
 
-\section{Discussione e conclusioni}
+\section{FalkorDB}
+FalkorDB è un modulo Redis: il motore grafo vive nel processo Redis ed estende il server con comandi dedicati. %
+Il caricamento avviene tramite libreria dinamica (ad esempio \texttt{/usr/lib/redis/modules/falkordb.so}).
+
+\subsection{Sintassi supportata}
+Il linguaggio operativo combina Cypher e comandi Redis del modulo. %
+Sono utilizzati pattern Cypher come \texttt{MATCH}, \texttt{MERGE}, \texttt{SET}, %
+\texttt{UNWIND}, e comandi \texttt{GRAPH.QUERY}, \texttt{GRAPH.RO\_QUERY}, \texttt{GRAPH.DELETE}, %
+\texttt{GRAPH.LIST}, \texttt{GRAPH.EXPLAIN}, \texttt{GRAPH.PROFILE}.
+La progettazione della pipeline di esempio è come al solito idempotente nella gestione dell'esperimento. %
+
+\begin{lstlisting}[language=SQL]
+GRAPH.QUERY social "MATCH (n) RETURN count(n)"
+GRAPH.RO_QUERY social "MATCH (n) RETURN n LIMIT 5"
+GRAPH.EXPLAIN social "MATCH (a)-[:KNOWS]->(b) RETURN a,b"
+\end{lstlisting}
+
+\subsection{API, driver e algoritmi}
+La connessione avviene tramite client Redis con \texttt{ping()} e invio di comandi \texttt{GRAPH.*}. %
+Le relazioni sono dirette, con tipo singolo; nodi e relazioni supportano proprietà. %
+I tipi gestiti includono nodi, relazioni, path, scalari, stringhe, booleani, interi, %
+float, geospaziali, null, array e mappe.
+FalkorDB distingue gli elementi strutturali del property graph (nodi e relazioni), %
+i path ottenibili come risultati delle query e i valori scalari/collection utilizzabili %
+nelle proprietà e nei risultati. Tra questi sono inclusi stringhe, valori booleani, %
+numerici, valori geospaziali, array e mappe, con limitazioni specifiche per la persistenza %
+delle mappe e delle collection.
+
+
+\subsection{Confronto sintassi Neo4j vs FalkorDB}
+La differenza pratica è nel livello di esecuzione: in Neo4j la query è nativa del server grafo, %
+in FalkorDB la query è veicolata come comando Redis con nome grafo esplicito o viene eseguita la %
+call verso API GraphBlas.
+
+\subsubsection{Connessione e inizializzazione driver}
+La sostituzione del driver è diretta: Neo4j usa \texttt{GraphDatabase.driver(...)} con verifica di connettività, %
+mentre FalkorDB usa \texttt{Redis(...)} con \texttt{ping()} e successivi comandi \texttt{GRAPH.*}.
+Vari esempi di codice sono disponibili nel repository del progetto, con riferimento particolare al %
+Notebook  \texttt{06-diff-API.ipynb}. Le particolari differenze si manifestano in output troncati in %
+modi differenti, query con sintassi non similare e implementazione di differenti algoritmi di analisi del grafo. %
+
+
+\subsection{Gestione grafo}
+In FalkorDB il nome del grafo è un identificatore operativo (es. \texttt{social}, \texttt{flight\_network}) %
+e viene passato in ogni comando. %
+Nel contesto Redis Cluster, il nome del grafo determina hash slot e master shard di appartenenza; %
+un singolo grafo risiede su un solo master in contesto di shard. La nostra configurazione è di tipo master-repliche.
+FalkorDB tratta ciascun grafo come una singola Redis key. %
+Redis Cluster assegna la key a uno dei 16.384 hash slot; quindi il grafo viene assegnato a un solo shard. %
+A livello FalkorDB/Redis Cluster, le repliche sono asincrone e possono essere utilizzate per failover e read scaling.
+Il deployment utilizza Redis Cluster con master e repliche. Ogni grafo appartiene a un singolo master shard; %
+le repliche mantengono una copia asincrona dei dati del master, possono essere promosse in caso di failover se %
+implementassimo un algoritmo di heartbeat e VIP dedicato.
+
+% example code constraint and index creation
+
+
+\subsection{Rappresentazione GraphBLAS}
+
+FalkorDB rappresenta internamente il grafo mediante matrici di adiacenza %
+sparse e utilizza GraphBLAS per esprimere le operazioni di analisi del grafo. %
+Questa rappresentazione è alla base degli algoritmi di %
+pathfinding, centralità e community detection disponibili nel motore, tra cui BFS, %
+PageRank, Betweenness Centrality, Harmonic Centrality, WCC e CDLP.
+
+Un esempio di ottizzazione di PathFinding usando matrici per %
+un grafo orientato con archi $a \to b$ e $b \to c$, abbiamo una matrice di adiacenza %
+iniziale $A$ e un l'esistenza di una percorso può essere rappresentato come prodotto matriciale $A^2$. %
+
+$$
+A =
+\begin{bmatrix}
+0 & 1 & 0\\
+0 & 0 & 1\\
+0 & 0 & 0
+\end{bmatrix}.
+$$
+
+
+$$
+A^2 =
+\begin{bmatrix}
+0 & 0 & 1\\
+0 & 0 & 0\\
+0 & 0 & 0
+\end{bmatrix}
+$$
+
+
+La matrice $A^2$ rappresenta i cammini di lunghezza due: 
+l'elemento $(a,c)$ è diverso da zero perché esiste il cammino $a \to b \to c$.
+
+La stessa formulazione può essere utilizzata per operazioni n-hop. %
+Ad esempio, una BFS può essere espressa attraverso operazioni sparse matrice-vettore, %
+applicate iterativamente alla matrice di adiacenza iniziale. In questo modo il traversal del grafo può %
+essere ricondotto a primitive di algebra lineare sparse \cite{FalkorDB-doc-theory}.
+
+
+% example code algorithm Louvain
+
+
+\begin{algorithm}
+\caption{Louvain}
+\begin{algorithmic}[1]
+\Procedure{Louvain}{$G = (V, E)$}
+    \State Inizializzare ogni nodo come una comunità separata
+    \Repeat
+        \State Per ogni nodo $i$, valutare il guadagno di modularità $\Delta Q$ 
+        \State \quad ottenuto spostando $i$ nella comunità del vicino $j$
+        \State Spostare $i$ nella comunità che massimizza $\Delta Q$ il vertice $V_i$
+    \Until{nessun spostamento migliora la modularità}
+    \State Aggregare ogni comunità in un super-nodo
+    \State Ripetere il processo sul grafo aggregato
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+
+% -----------------
+
+Mentre l'implementazione per una community detection in FalkorDB utilizza il label %
+propagation \cite{Repository-FalkorDB-algo_procedures} . %
+
+% -----------------
+
+\begin{algorithm}
+\caption{Label Propagation}
+\begin{algorithmic}[1]
+\Procedure{LabelPropagation}{$G = (V, E)$}
+    \State Inizializzare ogni nodo con un'etichetta diversa $L(v) \leftarrow v$
+    \Repeat
+        \For{ogni nodo $v \in V$ nell'ordine random dei nodi}
+            \State \quad osservare le etichette dei suoi vicini $N(v)$
+            \State \quad contare la frequenza di ciascuna etichetta tra i vicini
+            \State \quad assegnare a $v$ l'etichetta più frequente tra quelle dei vicini, random se il massimo è condiviso
+        \EndFor
+    \Until{le etichette non cambiano più}
+    \State Raggruppare i nodi con la stessa etichetta
+    \State Ogni gruppo ottenuto rappresenta una comunità
+    \State \Return Partizioni $\{ C_1, \dots, C_k \}$ dove ogni $C_i = \{ v \in V \mid L(v) = i \}$
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+
+
+La label propagation è un algoritmo per la ricerca di comunità, ma può dare risultati randomizzati %
+a seconda dell'ordine di visita dei nodi e della gestione dei casi di parità \cite{Wiki-LabelPropagation}. %
+
+La seguente suite di algoritmi è disponibile in FalkorDB, %
+ognuno da valutare con la propria implementazione custom: bfs, betweenness, %
+labelPropagation, pageRank, SPpaths, SSpaths, WCC, harmonic, maxFlow, MSF.
+
+
+
+\subsection{Projections}
+In FalkorDB la nozione operativa di projection è legata alla chiave identificativa del grafo (key %
+Redis) che ne determina il nome e conseguenti hash slot e shard di appartenenza. %
+Il comando \texttt{GRAPH.QUERY} opera sempre su un singolo grafo.
+La selezione del sottografo è espressa direttamente nella query %
+(pattern \texttt{MATCH}/\texttt{WHERE}) o nei parametri delle procedure algoritmo.
+
+
+Questo approccio è coerente con l'architettura del modulo: il motore grafo %
+è incorporato nel processo Redis, %
+e le operazioni di storage e backend restano comandi Redis %
+estesi (\texttt{GRAPH.QUERY}, \texttt{GRAPH.RO\_QUERY}, \texttt{GRAPH.PROFILE}).
+Funzioni e algoritmi invece sono implementati nativamente in Rust.
+
+
+\subsection{Caricamento batch e parametri}
+Il caricamento usa batch in memoria: i dataframe vengono normalizzati, convertiti in record e %
+processati con \texttt{UNWIND \$rows}.%
+Questa sintassi è scelta nel caso di inserimento di record, mantenendo la stessa logica di \texttt{MERGE} %
+e aggiornamento proprietà. Il caricamento batch può usare \texttt{UNWIND \$rows} e %
+\texttt{MERGE} garantendo la possibilità di avere idempotenza su nodi e relazioni. %
+Le query parametrizzate possono essere inviate con prefisso \texttt{CYPHER}.
+
+
+% example code entity and relation batch insert
+
+
+Per dataset grandi la documentazione dei loader FalkorDB distingue infatti il batch %
+loading dallo streaming: il loader Rust, per esempio, viene esplicitamente descritto %
+come memory-efficient e capace di processare i dati senza caricare tutto in memoria.%
+
+Nel codice degli esperimenti in Python si utilizzano batch parametrizzati in memoria, costruiti a partire dai %
+dataframe e inviati a FalkorDB tramite \texttt{UNWIND \$rows}. Questa scelta è del tutto arbitraria e %
+non requisito intrinseco del Database.
+
+\subsection{Effort e portabilità}
+La portabilità di una qualsiasi pipeline da Neo4j a FalkorDB non è banale e richiede un effort elevato. %
+Pur essendo entrambi database a grafo, cambiano il modello operativo e il livello di esecuzione: %
+Neo4j espone query e procedure del server grafo, mentre FalkorDB incapsula attraverso librerie GraphBLAS %
+\cite{Repository-FalkorDB-graphBlas} \cite{GraphBLAS} interrogando il backend Redis (\texttt{GRAPH.*}).
+Query e chiamate driver non sono direttamente sostituibili drop-in, %
+quindi una parte del codice va riscritta e ri-validata. %
+Non sempre poi esiste una corrispondenza diretta tra le stesse query. %
+Scordiamoci quindi una "semplice sostituzione di server" in questo caso.
+
+
+%---------------------------------------------------------------------
+%    Spark
+%---------------------------------------------------------------------
+
+\section{Scalare dati tabulari con Spark}
+
+Spark è un motore di esecuzione computazinale distribuito pensato per elaborare dati di dimensioni e tipo %
+tali da non essere gestibili con metodi classici su un singolo nodo. %
+Trova il suo spazio di utilizzo inizialmente come tool %
+di trasformazione tabulare tramite la compatibilità SQL e dataframe. Spark %
+legge, normalizza, aggrega e riscrive i dati. %
+Il punto di forza non è soltanto la scalabilità, ma anche il modello dichiarativo %
+delle trasformazioni, la valutazione lazy, la partizione del carico in micro batch %
+e la possibilità di riutilizzare gli stessi passaggi in caso di fallimento o %
+interruzione.
+
+\subsection{Feature principali}
+Spark viene utilizzato in genere con il linguaggio python tramite \texttt{pyspark}, %
+che espone le API e la possibilità di interagire con il motore SQL locale o distribuito. %
+Le operazioni più comuni sono \texttt{select}, \texttt{filter}, \texttt{withColumn}, %
+\texttt{groupBy}, \texttt{agg}, \texttt{join} e \texttt{cache}. %
+Il driver solitamente definisce il piano logico, mentre %
+gli executor eseguono i task sulle partizioni; questo rende %
+naturale sia il preprocessing batch sia l'analisi iterativa.
+
+\begin{lstlisting}[language=Python]
+from pyspark.sql import functions as F
+
+df.groupBy("Sesso").agg(F.avg("Eta").alias("eta_media")).show()
+\end{lstlisting}
+
+Questo tipo di aggregazione è tipico quando si vogliono %
+produrre statistiche descrittive o altri output aggregati.
+
+\subsubsection{Utilizzi comuni}
+
+La maggior parte delle funzionalità di base di una %
+libreria per la data analysis è garantita e nativamente presente %
+in Spark, come la conversione dei tipi, la rinomina delle colonne %
+e l’utilizzo delle funzioni di slicing. Questi passaggi sono %
+rilevanti quando i dati di partenza sono sporchi o eterogenei %
+e devono essere resi coerenti prima dell’elaborazione %
+finale. In particolare, Apache Spark consente di combinare %
+trasformazioni locali e aggregazioni globali mantenendo %
+il paradigma distribuito unendo i vari subtotali come risultati %
+da presentare al nodo Driver.
+
+
+\subsection{Tipi di dato}
+
+La gestione a basso livello viene astratta usando il sistema dei tipi. %
+Spak utilizza un backend da cui eredita la forte tipizzazione. %
+I principali tipi di dato includono:
+
+\begin{itemize}
+\item tipi numerici, come \texttt{ByteType}, \texttt{ShortType}, \texttt{IntegerType}, \texttt{LongType}, \texttt{FloatType} e \texttt{DoubleType};
+\item \texttt{DecimalType}, per valori decimali che richiedono una precisione controllata, ad esempio importi monetari;
+\item \texttt{StringType}, per dati testuali;
+\item \texttt{BooleanType}, per valori booleani;
+\item tipi temporali, come \texttt{DateType} e \texttt{TimestampType};
+\item tipi complessi, come \texttt{ArrayType}, \texttt{MapType} e \texttt{StructType};
+\item \texttt{BinaryType}, per dati binari.
+\end{itemize}
+
+\subsubsection{Rappresentazioni}
+
+A basso livello, ogni colonna di un DataFrame è %
+associata a un tipo di dato definito ottenendo un campo omogeneo. Questa %
+informazione è utilizzata da Spark durante la pianificazione e l'esecuzione delle operazioni.
+
+
+La struttura logica dei dati è descritta attraverso uno \emph{schema}, %
+costituito dall'insieme dei nomi delle colonne e dei relativi tipi. Lo %
+schema può essere dedotto automaticamente da Spark oppure definito %
+esplicitamente. La definizione esplicita è particolarmente utile quando %
+i dati provengono da sorgenti non uniformi, poiché evita che Spark %
+interpreti erroneamente i valori, ad esempio identificando come stringa %
+una colonna che dovrebbe contenere valori numerici.
+
+La presenza di uno schema consente inoltre a Spark di conoscere in %
+anticipo la struttura dei dati su cui dovranno essere eseguite le %
+trasformazioni. Questo permette al motore di pianificazione di analizzare %
+le operazioni richieste e di applicare ottimizzazioni prima dell'esecuzione effettiva.
+
+I tipi complessi permettono di rappresentare %
+strutture più articolate all'interno di una singola %
+colonna. Un \texttt{ArrayType} rappresenta una sequenza %
+di elementi dello stesso tipo, un \texttt{MapType} una %
+collezione di coppie chiave-valore, mentre uno \texttt{StructType} %
+permette di raggruppare più campi.
+
+Durante l'esecuzione %
+Spark può utilizzare rappresentazioni interne più compatte %
+ed efficienti. Quando i dati devono essere trasferiti tra %
+componenti del sistema, queste rappresentazioni %
+vengono serializzate secondo un formato appropriato.
+
+In particolare, Apache Parquet \cite{Apache-Parquet} è principalmente un formato %
+di memorizzazione colonnare, utilizzato da Spark per leggere %
+e scrivere dati in modo efficiente. Apache Arrow \cite{Apache-Arrow}  svolge invece %
+un ruolo importante nello scambio di dati in memoria. %
+
+Questa separazione tra livello logico e livello fisico è fondamentale %
+per comprendere il funzionamento interno di Spark. Il sistema può infatti %
+ragionare sui dati attraverso uno schema indipendente dalla loro %
+rappresentazione a basso livello e, successivamente, scegliere modalità %
+di memorizzazione, serializzazione e trasferimento più adatte alla specifica %
+fase dell'elaborazione locale o distribuita.git pull
+
+
+
+\subsubsection{Tidy data e formato wide/long}
+Un aspetto avanzato riguarda la gestione dei \emph{tidy data}. %
+In forma tidy ogni variabile ha una colonna dedicata, ogni %
+osservazione occupa una riga e ogni valore è atomico. %
+Sotto qualche esempio di pivoting e trasformazione tra formato wide e long.
+
+\begin{lstlisting}[language=Python]
+df_tidy = df.selectExpr(
+    "id",
+    "stack(3,'A',A,'B','B','C','C') as (variabile, valore)"
+)
+
+df_wide = (
+    df_tidy
+    .groupBy("id")
+    .pivot("variabile")
+    .agg(F.first("valore"))
+)
+\end{lstlisting}
+
+
+\subsection{Librerie avanzate}
+Apache spark può essere affiancato da librerie vericali per il calcolo come: 
+- GraphX per il calcolo su grafi \cite{GraphX}
+- MLlib per il machine learning distribuito \cite{MLlib}
+- Spark Streaming per l'elaborazione di flussi in tempo reale \cite{Spark-Structured-Streaming}
+
+Come vedremo successivamente queste librerie sono per ora una peculiarità di Spark. %
+
+\begin{lstlisting}[language=Python]
+spark
+  .readStream
+  .select($"value".cast("string").alias("jsonData"))
+  .select(from_json($"jsonData",jsonSchema).alias("payload"))
+  .writeStream
+  .trigger("1 seconds")
+  .start() 
+\end{lstlisting}
+
+
+
+\subsection{Effort di conversione da pandas a Spark DataFrame}
+L'utilizzo che è stato portato avanti in questo progetto riguarda un preprocessing %
+tabulare banale, senza trasformazioni complesse. %
+Ciò significa che il codice pandas esistente può essere convertito in Spark DataFrame, %
+ma richiede un effort di riscrittura e validazione. %
+Altri punti negativi dell'uso di spark sono l'eccessiva prolissità dei log che risultano %
+difficili da interpretare, l'uso eccessivo di risorse di memoria (sia come dimensione %
+che come bandwidth), CPU e ogni tipo di dispositivo che gli venga dato in pasto. %
+Possiamo fare di meglio?
+
+
+%---------------------------------------------------------------------
+%    Sail
+%---------------------------------------------------------------------
+
+\section{Usiamo Sail}
+
+Dove Spark con l'ecosistema Hadoop mostra segni di overead eccessivo, ad esempio con le classiche %
+operazioni di computazione su dati tabulari, %
+Sail si propone come alternativa più leggera e performante. %
+
+Per effettuare una connessione verso un cluser Spark si utilizza Spark Connect, %
+che permette di indirizzare il client verso un server remoto.
+
+\begin{lstlisting}[language=Python]
+spark = (SparkSession.builder
+    .appName("FlightPreprocessSpark")
+    .remote("sc://10.0.0.79:6066")
+    .getOrCreate())
+\end{lstlisting}
+
+
+
+L'uso di \texttt{SparkSession} permette di mantenere una sintassi %
+familiare per la creazione dei DataFrame, per le trasformazioni, %
+il casting dei tipi, la gestione delle date, le operazioni \emph{wide-to-long} tramite %
+\texttt{stack}, la ricostruzione tramite \texttt{pivot} e l'espansione di %
+array tramite \texttt{explode}. %
+La compatibilità riguarda quindi soprattutto il livello DataFrame %
+e consente di riutilizzare una parte del preprocessing tabulare %
+senza riscrivere la logica delle trasformazioni.
+
+
+
+\subsection{Computing}
+La pipeline di esempio \texttt{05-GA-US-flight-2015\_replace\_neo4J\_spark.ipynb} è %
+trasformata utilizzando Sail prima del caricamento nel database a grafo. %
+A questo punto Sail si comporta molto meglio rispetto a Spark intermini %
+di tempo e utilizzo di risorse intese come tempo e %
+memoria da assegnare alla computazione.
+
+
+\subsection{Benchmark della sessione Sail}
+Il benchmark nel file \texttt{06-diff-API.ipynb} solo una differente connessione %
+mantenendo invariata la funzione di computazione. %
+In questa computazione ed esperimento finale si vede espressamente il vantaggio di Sail %
+rispetto a Spark in termini di efficienza e gestione delle risorse. %
+
+\begin{lstlisting}
+===== RISULTATO BENCHMARK =====
+Spark : 25.537 s
+Sail  : 0.586 s
+Speedup Sail/Spark: 43.59x
+\end{lstlisting}
+
+
+
+\subsection{Nota sull'integrazione nella pipeline}
+La parte Spark/Sail in questo progetto è usata per scalare il preprocessing %
+tabulare mantenendo invariata l'interfaccia verso il caricamento grafo. %
+Sail è adatto a questo replacement, mentre Spark rimane necessario per le %
+librerie specializzate e le operazioni più complesse che richiedono l'intero ecosistema.
+
+
+\subsection{Limiti rispetto all'ecosistema Spark}
+Sail può offrire un'interfaccia compatibile per le operazioni DataFrame, %
+ma non replica automaticamente l'intero ecosistema Spark. %
+In particolare, le librerie specializzate utilizzate da Spark non sono %
+disponibili in Sail con lo stesso livello di integrazione:
+
+\begin{itemize}
+    \item \textbf{GraphX}: fornisce il modello a grafo e gli algoritmi %
+    distribuiti basati su RDD. Sail non offre l'implementazione GraphX; %
+    nel progetto le operazioni sul grafo restano quindi affidate al database grafo e alle sue API.
+    \item \textbf{MLlib}: integra algoritmi di machine learning distribuito, %
+    come la regressione mostrata nel notebook Spark. %
+    La semplice compatibilità dei DataFrame non implica la disponibilità dei moduli \texttt{pyspark.ml} in Sail.
+    \item \textbf{Spark Streaming}: permette di costruire query streaming, ad %
+    esempio leggendo socket e aggiornando conteggi con %
+    \texttt{readStream} e \texttt{writeStream}. Sail non fornisce la stessa infrastruttura di Structured Streaming; %
+    l'elaborazione dei flussi deve essere realizzata con componenti esterni o con un motore dedicato.
+\end{itemize}
+
+Di conseguenza Sail è una sostituzione mirata per il computing tabulare distribuito, %
+non un rimpiazzo completo di Spark. %
+Il vantaggio atteso è una maggiore leggerezza nelle operazioni %
+DataFrame; il costo è rinunciare alle librerie verticali %
+GraphX, MLlib e Spark Streaming e mantenere separati il %
+calcolo tabulare, l'analisi del grafo e l'elaborazione degli eventi.
+
+
+Potrebbe essere interessante integrare spark con Sail in modo da sfruttare i punti di forza di entrambi i sistemi: %
+Sail per il computing tabulare distribuito leggero e Spark per le librerie specializzate e le operazioni più complesse.
+Questo setup però non è stato attualmente affrontato nel progetto.
+
+
+
+%------------------------------------------
+%
+%------------------------------------------
+
+\section{Breve riepilogo}
+
+\subsection{Backend Redis: CAP Theorem}
 Il file \texttt{stats.csv} riassume 36 esecuzioni del piano sperimentale, distribuite sui tre scenari %
 \texttt{test\_consistency}, \texttt{test\_partitioning} e \texttt{test\_availability}, con valori di %
 \texttt{thread\_count} pari a \{1, 8, 32\} e \texttt{local\_test\_count} pari a \{1, 8, 32, 128\}. In %
@@ -311,15 +795,71 @@ tutte le run il campo \texttt{exit\_code} vale 0 e \texttt{result} vale \texttt{
 fallimenti operativi né anomalie esplicite nei log.
 
 Nel complesso, i risultati confermano che il protocollo sperimentale è ripetibile e che il cluster Redis ha %
-mantenuto un comportamento stabile in tutte le configurazioni testate. Questa stabilità è coerente con un %
-setup containerizzato e ben orchestrato, ma non basta per una validazione generale del teorema CAP: %
-lo studio mostra che, nel contesto osservato, i test sono stati eseguiti correttamente, non che il sistema %
-garantisca sempre consistenza forte o disponibilità in presenza di partizioni.
+mantenuto un comportamento stabile in tutte le configurazioni testate con un %
+setup containerizzato: %
+nel contesto osservato, i test sono stati eseguiti correttamente, il sistema di default garantisce %
+consistenza e stabilità sufficienti per pensare di scalare senza pensare a problematiche di CAP perchè
+già risolte.
 
 In sintesi, il lavoro evidenzia la solidità del piano sperimentale e la sua ripetibilità, ma per trarre %
 conclusioni più forti sarebbero necessari scenari di guasto più aggressivi, cluster più ampi e metriche %
 aggiuntive sulla qualità delle risposte sotto partizione.
 
+Sostanzialmente è un'ottima e affidabile base per poter creare pipeline veloci e scalabili.
+
+\subsection{Graph database Falkordb}
+FalkorDB ha mostrato di poter sostituire Neo4j nella pipeline sperimentale, %
+mantenendo il modello a grafo e le principali %
+operazioni di interrogazione attraverso i comandi implementati da FalkorDB. La sostituzione, %
+tuttavia, non è drop-in: devono essere adattati il driver, la sintassi delle query, %
+la gestione dei risultati e le procedure algoritmiche. %
+Nel contesto Redis Cluster ogni grafo è associato a una singola %
+chiave e quindi a un singolo shard, mentre le repliche %
+mantengono una copia asincrona. FalkorDB risulta pertanto adatto a distribuire la computazione %
+su repliche, ma richiede una fase di riscrittura e %
+ri-validazione del codice prima di poter garantire la piena equivalenza con Neo4j.
+Neo4J da parte sua essendo semi-closed come richiede il pagamento di licenze e registrzioni %
+centralizzate per l'uso del software.
+
+
+\subsection{Spark computing engine}
+Spark si è confermato un motore completo per Ogni computo relativo ai Big Data. Il modello %
+DataFrame, lo schema tipizzato, la valutazione lazy e le operazioni %
+di aggregazione e join permettono di costruire %
+pipeline scalabili e riutilizzabili. Il principale vantaggio %
+rispetto a soluzioni più semplici è l'ecosistema integrato %
+che comprende GraphX, MLlib e Spark Structured Streaming. Questo %
+risultato è accompagnato da un maggiore consumo di %
+risorse e da una maggiore complessità operativa, particolarmente %
+evidente per trasformazioni tabulari di piccole dimensioni.
+
+
+\subsection{Sail tabular computing}
+Sail è stato valutato come alternativa leggera per il calcolo tabulare %
+distribuito, mantenendo una sintassi compatibile %
+con Spark DataFrame e una connessione remota tramite %
+Spark Connect. Nel benchmark considerato, la stessa computazione %
+ha richiesto 25.537 secondi con Spark e 0.586 secondi con Sail, %
+corrispondenti a uno speedup misurato di 43.59 volte. %
+Il vantaggio riguarda quindi il preprocessing tabulare, mentre Sail (per ora) %
+non sostituisce l'intero ecosistema Spark: non offre %
+le integrazioni equivalenti a GraphX, MLlib e Spark Streaming. La %
+scelta tra i due strumenti dipende pertanto dal carico: %
+Sail per trasformazioni tabulari leggere e Spark quando sono necessarie le librerie specializzate.
+
+
+\section{Discussione e conclusioni}
+Questi 4 sotto-progetti sono stati pensati per affrontare diverse %
+esigenze nel contesto dei Big Data, ciascuno con un focus %
+specifico cercando per lo più di evitare vendor-lock-in. %
+Quello che ha spinto alla comparazione tra questi strumenti è stato %
+il desiderio di identificare le soluzioni più adatte a diversi %
+scenari di calcolo distribuito, bilanciando prestazioni, %
+complessità e correttezza dei risultati aggiungendo di volta in volta a piccoli step %
+complessità. %
+In sistensi non esiste una soluzione unica che domini su tutte, ma %
+una combinazione di strumenti può essere la scelta più efficace a %
+seconda del contesto e dei requisiti specifici.
 
 \newpage
 \addcontentsline{toc}{section}{Riferimenti}
