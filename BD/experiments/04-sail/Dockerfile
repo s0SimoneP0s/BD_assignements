@@ -1,14 +1,4 @@
-#ARG PYTHON_VERSION=3.10
 
-#FROM python:${PYTHON_VERSION}-slim
-
-#ARG PYSAIL_VERSION=0.7.1
-#ARG PYSPARK_VERSION=4.1.2
-
-#RUN python3 -m pip install --no-cache-dir "pyspark-client==${PYSPARK_VERSION}" 
-#RUN python3 -m pip install --no-cache-dir "pysail==${PYSAIL_VERSION}"
-
-#ENTRYPOINT ["/usr/local/bin/sail"]
 
 
 ARG PYTHON_VERSION=3.10
@@ -40,9 +30,7 @@ RUN apt-get update && \
         git \
         pkg-config
 
-#RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs > /tmp/rustup-init && \
-#    chmod a+x /tmp/rustup-init && \
-#    /tmp/rustup-init -y --no-modify-path --profile default --default-toolchain ${RUST_VERSION}
+
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 
@@ -65,8 +53,6 @@ RUN --mount=type=cache,target=/root/.cargo/registry/ \
     cargo build -p sail-cli --profile ${RUST_PROFILE} --bins  && \
     cp /app/target/${RUST_TARGET_SUBDIR}/sail /usr/local/bin
 
-#    cargo build -p sail-cli --profile ${RUST_PROFILE} --bins --jobs 1 && \
-
 
 FROM python:${PYTHON_VERSION}-slim
 
@@ -77,4 +63,4 @@ RUN python3 -m pip install --no-cache-dir "pyspark-client==${PYSPARK_VERSION}"
 COPY --from=builder /usr/local/bin/sail /usr/local/bin
 
 ENTRYPOINT ["/usr/local/bin/sail"]
-#CMD ["spark", "server", "--ip", "0.0.0.0", "--port", "50051"]
+
